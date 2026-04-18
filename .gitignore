@@ -1,6 +1,7 @@
-# Python
+# Python bytecode
 __pycache__/
 *.py[cod]
+*$py.class
 *.pyo
 *.pyd
 *.egg
@@ -14,17 +15,30 @@ build/
 venv/
 env/
 
-# Output artefacts
-output/
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
 
-# Jupyter
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Jupyter Notebooks
 .ipynb_checkpoints/
 
-# IDE
-.vscode/
-.idea/
-*.swp
-
-# OS
+# OS artefacts
 .DS_Store
 Thumbs.db
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# Generated outputs
+output/
+*.png
+*.csv
+
