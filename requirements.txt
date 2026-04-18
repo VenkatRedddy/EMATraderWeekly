@@ -5,3 +5,4 @@ ta>=0.10.2
 matplotlib>=3.7.0
 plotly>=5.15.0
 scipy>=1.10.0
+

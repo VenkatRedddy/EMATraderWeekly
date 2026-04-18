@@ -3,6 +3,12 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.pyo
+*.pyd
+*.egg
+*.egg-info/
+dist/
+build/
+*.so
 
 # Virtual environments
 .venv/
@@ -32,5 +38,7 @@ Thumbs.db
 *.swp
 
 # Generated outputs
+output/
 *.png
 *.csv
+
