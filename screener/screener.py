@@ -152,13 +152,17 @@ def run_screener(cfg) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
 
         # Build signal if crossover detected AND passes volume filter
         if avg_vol >= cfg.MIN_AVG_VOLUME:
+            ema_fast_key = f"ema{cfg.EMA_FAST}"
+            ema_slow_key = f"ema{cfg.EMA_SLOW}"
             if latest["Cross_Up"]:
                 signals.append({
                     "symbol": symbol,
                     "direction": "BULLISH",
                     "price": row["Close"],
-                    f"ema{cfg.EMA_FAST}": row[f"EMA{cfg.EMA_FAST}"],
-                    f"ema{cfg.EMA_SLOW}": row[f"EMA{cfg.EMA_SLOW}"],
+                    ema_fast_key: row[f"EMA{cfg.EMA_FAST}"],
+                    ema_slow_key: row[f"EMA{cfg.EMA_SLOW}"],
+                    "ema_fast_key": ema_fast_key,
+                    "ema_slow_key": ema_slow_key,
                     "avg_volume": int(avg_vol),
                     "timestamp": row["Week"],
                 })
@@ -167,8 +171,10 @@ def run_screener(cfg) -> tuple[pd.DataFrame, list[dict[str, Any]]]:
                     "symbol": symbol,
                     "direction": "BEARISH",
                     "price": row["Close"],
-                    f"ema{cfg.EMA_FAST}": row[f"EMA{cfg.EMA_FAST}"],
-                    f"ema{cfg.EMA_SLOW}": row[f"EMA{cfg.EMA_SLOW}"],
+                    ema_fast_key: row[f"EMA{cfg.EMA_FAST}"],
+                    ema_slow_key: row[f"EMA{cfg.EMA_SLOW}"],
+                    "ema_fast_key": ema_fast_key,
+                    "ema_slow_key": ema_slow_key,
                     "avg_volume": int(avg_vol),
                     "timestamp": row["Week"],
                 })

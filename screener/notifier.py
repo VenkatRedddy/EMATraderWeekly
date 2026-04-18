@@ -43,9 +43,9 @@ def build_alert_message(signal: dict[str, Any]) -> str:
         emoji = "🔴"
         action = "SELL SIGNAL — EMA9 crossed BELOW EMA21 (Death Cross)"
 
-    # Build a key name like "ema9" regardless of fast/slow period
-    ema_fast_key = next((k for k in signal if k.startswith("ema") and k != "ema21"), "ema9")
-    ema_slow_key = next((k for k in signal if k.startswith("ema") and k != ema_fast_key), "ema21")
+    # Use explicit key fields stored by the screener; fall back gracefully.
+    ema_fast_key = signal.get("ema_fast_key", "ema9")
+    ema_slow_key = signal.get("ema_slow_key", "ema21")
 
     lines = [
         f"{emoji} EMA Weekly Crossover Alert",

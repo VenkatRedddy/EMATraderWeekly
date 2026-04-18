@@ -234,6 +234,8 @@ class TestLogSignals:
                 "price": 150.0,
                 "ema9": 148.0,
                 "ema21": 145.0,
+                "ema_fast_key": "ema9",
+                "ema_slow_key": "ema21",
                 "avg_volume": 1_200_000,
                 "timestamp": "2024-01-08",
             }
@@ -251,6 +253,8 @@ class TestLogSignals:
             "price": 400.0,
             "ema9": 402.0,
             "ema21": 410.0,
+            "ema_fast_key": "ema9",
+            "ema_slow_key": "ema21",
             "avg_volume": 800_000,
             "timestamp": "2024-01-08",
         }
@@ -275,6 +279,8 @@ class TestBuildAlertMessage:
             "price": 900.0,
             "ema9": 890.0,
             "ema21": 880.0,
+            "ema_fast_key": "ema9",
+            "ema_slow_key": "ema21",
             "avg_volume": 5_000_000,
             "timestamp": "2024-04-15",
         }
@@ -286,6 +292,8 @@ class TestBuildAlertMessage:
             "price": 200.0,
             "ema9": 195.0,
             "ema21": 210.0,
+            "ema_fast_key": "ema9",
+            "ema_slow_key": "ema21",
             "avg_volume": 3_000_000,
             "timestamp": "2024-04-15",
         }
@@ -334,6 +342,8 @@ class TestSendNotifications:
             "price": 200.0,
             "ema9": 198.0,
             "ema21": 190.0,
+            "ema_fast_key": "ema9",
+            "ema_slow_key": "ema21",
             "avg_volume": 600_000,
             "timestamp": "2024-04-15",
         }
@@ -349,6 +359,8 @@ class TestSendNotifications:
             "price": 200.0,
             "ema9": 198.0,
             "ema21": 190.0,
+            "ema_fast_key": "ema9",
+            "ema_slow_key": "ema21",
             "avg_volume": 600_000,
             "timestamp": "2024-04-15",
         }
@@ -364,6 +376,8 @@ class TestSendNotifications:
             "price": 150.0,
             "ema9": 148.0,
             "ema21": 155.0,
+            "ema_fast_key": "ema9",
+            "ema_slow_key": "ema21",
             "avg_volume": 700_000,
             "timestamp": "2024-04-15",
         }
