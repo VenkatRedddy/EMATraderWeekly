@@ -1,11 +1,16 @@
 """
-tests/test_screener.py — Unit tests for the EMA crossover screener module.
+tests/test_screener.py — Unit tests for both screener implementations.
 
-Tests use synthetic data only (no network calls).
+  Part 1: TradingView-style 8-filter screener (screener.py at repo root).
+          Tests use synthetic data; all network calls are mocked.
+
+  Part 2: EMA crossover screener with notifications (screener/ package).
+          Tests use synthetic data only (no network calls).
 """
 
 from __future__ import annotations
 
+import math
 import sys
 import os
 import types
@@ -16,19 +21,314 @@ import numpy as np
 import pandas as pd
 import pytest
 
-# Ensure the project root is importable
+# ── Path setup ───────────────────────────────────────────────────────────────
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from screener.screener import _calc_ema, _compute_indicators, _log_signals, run_screener
+# ── Imports for Part 1 (root-level screener.py) ───────────────────────────────
+# Use importlib to load screener.py directly, because the screener/ package
+# shadows a plain `import screener` after the merge.
+import importlib.util as _ilu
+
+_tv_spec = _ilu.spec_from_file_location(
+    "tv_screener",
+    str(_REPO_ROOT / "screener.py"),
+)
+_tv_mod = _ilu.module_from_spec(_tv_spec)
+sys.modules["tv_screener"] = _tv_mod  # register so patch("tv_screener.*") resolves
+_tv_spec.loader.exec_module(_tv_mod)
+_screen_ticker = _tv_mod._screen_ticker
+run_tv_screener = _tv_mod.run_screener
+
+from indicators import add_adr
+
+# ── Imports for Part 2 (screener/ package) ────────────────────────────────────
+from screener.screener import _calc_ema, _compute_indicators, _log_signals, run_screener as run_ema_screener
 from screener.notifier import build_alert_message, send_notifications
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+# PART 1 — TradingView-style 8-filter screener (screener.py)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# ── helpers ───────────────────────────────────────────────────────────────────
+
+def _make_daily_df(
+    n: int = 80,
+    base_price: float = 50.0,
+    step: float = 1.0,
+    volume: float = 1_000_000.0,
+    high_mult: float = 1.03,
+    low_mult: float = 0.97,
+) -> pd.DataFrame:
+    """Build a synthetic daily OHLCV DataFrame.
+
+    *step* is the price increment per bar.  Use ``step=1.0`` (default) to
+    produce a ~0.78 % daily gain — comfortably above the 0.5 % screener
+    threshold.  Use ``step=0.0`` to produce a flat (0 % change) series.
+    """
+    dates = pd.date_range("2024-01-02", periods=n, freq="B")
+    close = [base_price + i * step for i in range(n)]
+    return pd.DataFrame(
+        {
+            "Open": close,
+            "High": [c * high_mult for c in close],
+            "Low": [c * low_mult for c in close],
+            "Close": close,
+            "Volume": [volume] * n,
+        },
+        index=dates,
+    )
+
+
+def _make_weekly_df_simple(n: int = 40, base_price: float = 50.0) -> pd.DataFrame:
+    """Build a synthetic weekly OHLCV DataFrame (used by Part 1 tests)."""
+    dates = pd.date_range("2022-01-03", periods=n, freq="W-MON")
+    close = [base_price + i * 0.5 for i in range(n)]
+    return pd.DataFrame(
+        {
+            "Open": close,
+            "High": [c * 1.02 for c in close],
+            "Low":  [c * 0.98 for c in close],
+            "Close": close,
+            "Volume": [2_000_000.0] * n,
+        },
+        index=dates,
+    )
+
+
+_GOOD_FUNDAMENTALS = {
+    "market_cap": 500_000_000.0,   # 500 M -- passes >=300 M
+    "analyst_rating": "buy",
+    "previous_close": 49.5,
+}
+
+_LOW_MKTCAP_FUNDAMENTALS = {
+    "market_cap": 100_000_000.0,   # 100 M -- fails >=300 M
+    "analyst_rating": "buy",
+    "previous_close": 49.5,
+}
+
+_SELL_RATING_FUNDAMENTALS = {
+    "market_cap": 500_000_000.0,
+    "analyst_rating": "sell",     # not in allowed list
+    "previous_close": 49.5,
+}
+
+_MISSING_RATING_FUNDAMENTALS = {
+    "market_cap": 500_000_000.0,
+    "analyst_rating": None,        # missing data
+    "previous_close": 49.5,
+}
+
+
+# ── ADR indicator tests ───────────────────────────────────────────────────────
+
+class TestAddAdr:
+    def test_column_added(self):
+        df = _make_daily_df()
+        result = add_adr(df, period=14)
+        assert "ADR_pct" in result.columns
+
+    def test_original_not_mutated(self):
+        df = _make_daily_df()
+        _ = add_adr(df, period=14)
+        assert "ADR_pct" not in df.columns
+
+    def test_adr_value_positive(self):
+        df = _make_daily_df(high_mult=1.03, low_mult=0.97)
+        result = add_adr(df, period=14)
+        assert (result["ADR_pct"].dropna() > 0).all()
+
+    def test_flat_high_low_gives_zero_adr(self):
+        df = _make_daily_df()
+        df["High"] = df["Close"]
+        df["Low"] = df["Close"]
+        result = add_adr(df, period=14)
+        assert result["ADR_pct"].iloc[-1] == pytest.approx(0.0, abs=1e-6)
+
+    def test_adr_calculation(self):
+        """Manual verification: for a single bar H=110, L=90, C=100 -> range%=20."""
+        dates = pd.date_range("2024-01-01", periods=1, freq="B")
+        df = pd.DataFrame(
+            {"Open": [100.0], "High": [110.0], "Low": [90.0], "Close": [100.0], "Volume": [1e6]},
+            index=dates,
+        )
+        result = add_adr(df, period=1)
+        assert result["ADR_pct"].iloc[0] == pytest.approx(20.0, rel=1e-6)
+
+
+# ── _screen_ticker tests ──────────────────────────────────────────────────────
+
+class TestScreenTicker:
+    """Tests for the per-ticker screener function using mocked data fetchers."""
+
+    def _run(self, daily_df, fundamentals, weekly_df=None):
+        """Helper: patch data fetchers and run _screen_ticker for 'TEST'."""
+        if weekly_df is None:
+            weekly_df = _make_weekly_df_simple()
+        with (
+            patch("tv_screener.fetch_daily_data", return_value=daily_df),
+            patch("tv_screener.fetch_fundamentals", return_value=fundamentals),
+            patch("tv_screener.fetch_weekly_data", return_value=weekly_df),
+        ):
+            return _screen_ticker("TEST")
+
+    def test_all_filters_pass(self):
+        """A stock meeting every criterion should pass the screener."""
+        daily = _make_daily_df(n=80, base_price=50.0, volume=1_000_000.0)
+        row = self._run(daily, _GOOD_FUNDAMENTALS)
+        assert row["pass_screener"] is True
+
+    def test_weekly_signal_populated_for_passing_stock(self):
+        daily = _make_daily_df(n=80, base_price=50.0, volume=1_000_000.0)
+        row = self._run(daily, _GOOD_FUNDAMENTALS)
+        assert row["weekly_signal"] in {"GOLDEN_CROSS", "DEATH_CROSS", "HOLD"}
+
+    def test_fails_low_price(self):
+        """Close price below SCREENER_MIN_PRICE should fail."""
+        daily = _make_daily_df(n=80, base_price=1.5, step=0.0, volume=1_000_000.0)
+        row = self._run(daily, _GOOD_FUNDAMENTALS)
+        assert row["pass_screener"] is False
+        assert row["f_price"] is False
+
+    def test_fails_flat_price_change(self):
+        """A flat series has 0% change, which should fail >0.5% filter."""
+        daily = _make_daily_df(n=80, base_price=50.0, step=0.0, volume=1_000_000.0)
+        row = self._run(daily, _GOOD_FUNDAMENTALS)
+        assert row["pass_screener"] is False
+        assert row["f_change"] is False
+
+    def test_fails_low_market_cap(self):
+        daily = _make_daily_df(n=80, base_price=50.0, step=1.0, volume=1_000_000.0)
+        row = self._run(daily, _LOW_MKTCAP_FUNDAMENTALS)
+        assert row["pass_screener"] is False
+        assert row["f_market_cap"] is False
+
+    def test_fails_sell_rating(self):
+        daily = _make_daily_df(n=80, base_price=50.0, step=1.0, volume=1_000_000.0)
+        row = self._run(daily, _SELL_RATING_FUNDAMENTALS)
+        assert row["pass_screener"] is False
+        assert row["f_analyst"] is False
+
+    def test_passes_with_missing_analyst_data(self):
+        """Missing analyst data -> filter skipped (not a hard fail)."""
+        daily = _make_daily_df(n=80, base_price=50.0, step=1.0, volume=1_000_000.0)
+        row = self._run(daily, _MISSING_RATING_FUNDAMENTALS)
+        assert row["f_analyst"] is None
+        assert row["pass_screener"] is True
+
+    def test_fails_when_ema50_above_price(self):
+        """A falling price series causes EMA50 > price -> should fail."""
+        n = 80
+        dates = pd.date_range("2024-01-02", periods=n, freq="B")
+        close = [100.0 - i * 0.5 for i in range(n)]
+        daily = pd.DataFrame(
+            {
+                "Open": close,
+                "High": [c * 1.03 for c in close],
+                "Low": [c * 0.97 for c in close],
+                "Close": close,
+                "Volume": [1_000_000.0] * n,
+            },
+            index=dates,
+        )
+        row = self._run(daily, _GOOD_FUNDAMENTALS)
+        assert row["f_ema50"] is False or row["f_ema21"] is False
+
+    def test_fails_low_volume(self):
+        """10-day avg volume below 500K should fail."""
+        daily = _make_daily_df(n=80, base_price=50.0, step=1.0, volume=100_000.0)
+        row = self._run(daily, _GOOD_FUNDAMENTALS)
+        assert row["pass_screener"] is False
+        assert row["f_volume"] is False
+
+    def test_fails_low_adr(self):
+        """ADR of ~0.2% (High/Low very close to Close) should fail >=2% threshold."""
+        daily = _make_daily_df(n=80, base_price=50.0, step=1.0, volume=1_000_000.0)
+        daily["High"] = daily["Close"] * 1.001
+        daily["Low"] = daily["Close"] * 0.999
+        row = self._run(daily, _GOOD_FUNDAMENTALS)
+        assert row["pass_screener"] is False
+        assert row["f_adr"] is False
+
+    def test_empty_daily_data_returns_no_pass(self):
+        with (
+            patch("tv_screener.fetch_daily_data", return_value=pd.DataFrame()),
+            patch("tv_screener.fetch_fundamentals", return_value=_GOOD_FUNDAMENTALS),
+        ):
+            row = _screen_ticker("TEST")
+        assert row["pass_screener"] is False
+
+
+# ── run_tv_screener integration tests ─────────────────────────────────────────
+
+class TestRunTvScreener:
+    """Smoke-test run_tv_screener (root-level screener.py) with mocked fetchers."""
+
+    def test_returns_dataframe(self, tmp_path):
+        daily = _make_daily_df(n=80, base_price=50.0, step=1.0, volume=1_000_000.0)
+        weekly = _make_weekly_df_simple()
+        out_csv = str(tmp_path / "results.csv")
+        with (
+            patch("tv_screener.fetch_daily_data", return_value=daily),
+            patch("tv_screener.fetch_fundamentals", return_value=_GOOD_FUNDAMENTALS),
+            patch("tv_screener.fetch_weekly_data", return_value=weekly),
+        ):
+            result = run_tv_screener(tickers=["FAKE1", "FAKE2"], output_csv=out_csv)
+        assert isinstance(result, pd.DataFrame)
+        assert len(result) == 2
+
+    def test_csv_written(self, tmp_path):
+        daily = _make_daily_df(n=80, base_price=50.0, step=1.0, volume=1_000_000.0)
+        weekly = _make_weekly_df_simple()
+        out_csv = str(tmp_path / "results.csv")
+        with (
+            patch("tv_screener.fetch_daily_data", return_value=daily),
+            patch("tv_screener.fetch_fundamentals", return_value=_GOOD_FUNDAMENTALS),
+            patch("tv_screener.fetch_weekly_data", return_value=weekly),
+        ):
+            run_tv_screener(tickers=["FAKE1"], output_csv=out_csv)
+        assert os.path.exists(out_csv)
+        df = pd.read_csv(out_csv)
+        assert len(df) == 1
+        assert "ticker" in df.columns
+        assert "weekly_signal" in df.columns
+
+    def test_sorted_by_volume_desc(self, tmp_path):
+        """Passing tickers should be sorted highest volume first."""
+        daily_hi = _make_daily_df(n=80, base_price=50.0, step=1.0, volume=5_000_000.0)
+        daily_lo = _make_daily_df(n=80, base_price=50.0, step=1.0, volume=1_000_000.0)
+        weekly = _make_weekly_df_simple()
+        out_csv = str(tmp_path / "results.csv")
+
+        tickers_order = ["HI_VOL", "LO_VOL"]
+
+        def _mock_daily(ticker, **kwargs):
+            return daily_hi if ticker == "HI_VOL" else daily_lo
+
+        with (
+            patch("tv_screener.fetch_daily_data", side_effect=_mock_daily),
+            patch("tv_screener.fetch_fundamentals", return_value=_GOOD_FUNDAMENTALS),
+            patch("tv_screener.fetch_weekly_data", return_value=weekly),
+        ):
+            result = run_tv_screener(tickers=tickers_order, output_csv=out_csv)
+
+        passing = result[result["pass_screener"]]
+        if len(passing) >= 2:
+            vols = passing["avg_volume_10d"].tolist()
+            assert vols == sorted(vols, reverse=True)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# PART 2 — EMA crossover screener with notifications (screener/ package)
+# ══════════════════════════════════════════════════════════════════════════════
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _make_weekly_df(closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:
-    """Build a minimal weekly OHLCV DataFrame."""
+def _make_weekly_df(closes: list, volumes: list = None) -> pd.DataFrame:
+    """Build a minimal weekly OHLCV DataFrame (used by Part 2 tests)."""
     n = len(closes)
     if volumes is None:
         volumes = [1_000_000.0] * n
@@ -110,7 +410,6 @@ class TestComputeIndicators:
 
     def test_cross_up_detected(self):
         """Simulate a falling then sharply rising series to trigger a golden cross."""
-        # Gradually fall (EMA9 drops below EMA21), then jump sharply up
         closes = [100.0 - i * 2 for i in range(25)] + [200.0] * 25
         df = _make_weekly_df(closes)
         result = _compute_indicators(df, ema_fast=9, ema_slow=21)
@@ -119,7 +418,6 @@ class TestComputeIndicators:
 
     def test_cross_down_detected(self):
         """Simulate a rising then sharply falling series to trigger a death cross."""
-        # Gradually rise (EMA9 rises above EMA21), then drop sharply
         closes = [50.0 + i * 2 for i in range(25)] + [10.0] * 25
         df = _make_weekly_df(closes)
         result = _compute_indicators(df, ema_fast=9, ema_slow=21)
@@ -138,24 +436,14 @@ class TestComputeIndicators:
         assert result["Avg_Volume_10W"].iloc[-1] == pytest.approx(vol, rel=1e-9)
 
 
-# ── run_screener with mocked yfinance ─────────────────────────────────────────
+# ── run_ema_screener with mocked yfinance ─────────────────────────────────────
 
-class TestRunScreener:
-    def _patched_fetch(self, closes, volumes=None):
-        """Return a mock _fetch_one that always returns synthetic data."""
-        df = _make_weekly_df(closes, volumes)
-
-        def _mock_fetch(symbol, lookback_weeks):
-            return df.copy()
-
-        return _mock_fetch
-
+class TestRunEmaScreener:
     def test_empty_table_when_all_data_missing(self):
         cfg = _make_mock_cfg()
         with patch("screener.screener._fetch_one", return_value=None):
-            # Override get_symbols to return just 1 symbol
             with patch("screener.stock_universe.get_symbols", return_value=["AAPL"]):
-                table, signals = run_screener(cfg)
+                table, signals = run_ema_screener(cfg)
         assert table.empty
         assert signals == []
 
@@ -164,8 +452,8 @@ class TestRunScreener:
         cfg = _make_mock_cfg()
         call_count = [0]
         volumes_by_call = [
-            [500_000.0] * 35,  # AAPL — low volume
-            [5_000_000.0] * 35,  # MSFT — high volume
+            [500_000.0] * 35,   # AAPL -- low volume
+            [5_000_000.0] * 35, # MSFT -- high volume
         ]
 
         def mock_fetch(symbol, lookback_weeks):
@@ -175,16 +463,14 @@ class TestRunScreener:
 
         with patch("screener.screener._fetch_one", side_effect=mock_fetch):
             with patch("screener.stock_universe.get_symbols", return_value=["AAPL", "MSFT"]):
-                table, _ = run_screener(cfg)
+                table, _ = run_ema_screener(cfg)
 
         assert not table.empty
-        # Higher volume should be first
         assert table.iloc[0]["Avg_Volume_10W"] >= table.iloc[-1]["Avg_Volume_10W"]
 
     def test_volume_filter_applied_to_signals(self):
         """Crossover signals should only appear for stocks above MIN_AVG_VOLUME."""
         cfg = _make_mock_cfg(MIN_AVG_VOLUME=1_000_000)
-        # Low volume stock: crossover but below threshold → no signal
         low_vol_closes = [50.0] * 20 + [200.0] * 15
         low_vol_df = _make_weekly_df(low_vol_closes, [100_000.0] * 35)
 
@@ -193,32 +479,28 @@ class TestRunScreener:
 
         with patch("screener.screener._fetch_one", side_effect=mock_fetch):
             with patch("screener.stock_universe.get_symbols", return_value=["LOWVOL"]):
-                _, signals = run_screener(cfg)
+                _, signals = run_ema_screener(cfg)
 
         assert signals == []
 
     def test_crossover_signal_captured(self):
         """High-volume stock with a crossover should produce a signal."""
         cfg = _make_mock_cfg(MIN_AVG_VOLUME=500_000)
-        # Force a golden cross by using low then high prices
         closes = [50.0] * 22 + [500.0] * 13
         df = _make_weekly_df(closes, [2_000_000.0] * 35)
 
-        # Verify that _compute_indicators actually produces a cross_up
         computed = _compute_indicators(df, 9, 21)
         if not computed["Cross_Up"].any():
-            pytest.skip("Synthetic data didn't produce a crossover — skip test.")
+            pytest.skip("Synthetic data didn't produce a crossover -- skip test.")
 
         def mock_fetch(symbol, lookback_weeks):
             return df.copy()
 
         with patch("screener.screener._fetch_one", side_effect=mock_fetch):
             with patch("screener.stock_universe.get_symbols", return_value=["TEST"]):
-                table, signals = run_screener(cfg)
+                table, signals = run_ema_screener(cfg)
 
         assert not table.empty
-        # May or may not have a signal depending on which bar is "latest completed"
-        # but the table should contain the stock
         assert table.iloc[0]["Symbol"] == "TEST"
 
 
@@ -320,11 +602,11 @@ class TestBuildAlertMessage:
 
     def test_bullish_has_green_emoji(self):
         msg = build_alert_message(self._bullish_signal())
-        assert "🟢" in msg
+        assert "\U0001f7e2" in msg
 
     def test_bearish_has_red_emoji(self):
         msg = build_alert_message(self._bearish_signal())
-        assert "🔴" in msg
+        assert "\U0001f534" in msg
 
 
 # ── send_notifications ────────────────────────────────────────────────────────
