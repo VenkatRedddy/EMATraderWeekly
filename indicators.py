@@ -98,6 +98,30 @@ def add_volume_ma(df: pd.DataFrame, period: int = VOLUME_MA_PERIOD) -> pd.DataFr
     return out
 
 
+def add_adr(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+    """Add Average Daily Range percentage column (``ADR_pct``).
+
+    ADR% = rolling mean of ``(High − Low) / Close * 100`` over *period* bars.
+    A period of 14 trading days is commonly used.
+
+    Parameters
+    ----------
+    df:
+        DataFrame that must contain ``High``, ``Low``, and ``Close`` columns.
+    period:
+        Rolling window (bars) used to average the daily range.
+
+    Returns
+    -------
+    pd.DataFrame
+        Copy of *df* with an extra ``ADR_pct`` column.
+    """
+    out = df.copy()
+    daily_range_pct = (out["High"] - out["Low"]) / out["Close"] * 100.0
+    out["ADR_pct"] = daily_range_pct.rolling(window=period, min_periods=1).mean()
+    return out
+
+
 def add_all_indicators(df: pd.DataFrame) -> pd.DataFrame:
     """Convenience wrapper: apply all four indicator functions in order."""
     df = add_ema(df)
