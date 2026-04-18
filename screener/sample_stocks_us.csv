@@ -1,0 +1,51 @@
+Symbol,Name,Sector
+AAPL,Apple Inc.,Technology
+MSFT,Microsoft Corporation,Technology
+NVDA,NVIDIA Corporation,Technology
+GOOGL,Alphabet Inc.,Communication Services
+GOOG,Alphabet Inc. Class C,Communication Services
+AMZN,Amazon.com Inc.,Consumer Discretionary
+META,Meta Platforms Inc.,Communication Services
+TSLA,Tesla Inc.,Consumer Discretionary
+AVGO,Broadcom Inc.,Technology
+BRK-B,Berkshire Hathaway,Financials
+LLY,Eli Lilly and Company,Health Care
+JPM,JPMorgan Chase & Co.,Financials
+V,Visa Inc.,Financials
+UNH,UnitedHealth Group,Health Care
+XOM,Exxon Mobil Corporation,Energy
+MA,Mastercard Incorporated,Financials
+JNJ,Johnson & Johnson,Health Care
+PG,Procter & Gamble,Consumer Staples
+HD,The Home Depot,Consumer Discretionary
+COST,Costco Wholesale,Consumer Staples
+MRK,Merck & Co.,Health Care
+ABBV,AbbVie Inc.,Health Care
+CVX,Chevron Corporation,Energy
+ORCL,Oracle Corporation,Technology
+WMT,Walmart Inc.,Consumer Staples
+CRM,Salesforce Inc.,Technology
+BAC,Bank of America,Financials
+KO,The Coca-Cola Company,Consumer Staples
+PEP,PepsiCo Inc.,Consumer Staples
+AMD,Advanced Micro Devices,Technology
+NFLX,Netflix Inc.,Communication Services
+TMO,Thermo Fisher Scientific,Health Care
+ACN,Accenture plc,Technology
+MCD,McDonald's Corporation,Consumer Discretionary
+CSCO,Cisco Systems,Technology
+LIN,Linde plc,Materials
+ADBE,Adobe Inc.,Technology
+WFC,Wells Fargo & Company,Financials
+TXN,Texas Instruments,Technology
+DIS,The Walt Disney Company,Communication Services
+IBM,International Business Machines,Technology
+INTC,Intel Corporation,Technology
+QCOM,Qualcomm Inc.,Technology
+INTU,Intuit Inc.,Technology
+AMAT,Applied Materials,Technology
+GE,General Electric,Industrials
+CAT,Caterpillar Inc.,Industrials
+BA,Boeing Company,Industrials
+UPS,United Parcel Service,Industrials
+GS,Goldman Sachs Group,Financials

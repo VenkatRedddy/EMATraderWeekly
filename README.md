@@ -2,22 +2,30 @@
 
 **Python EMA9/EMA21 Weekly Moving Average Crossover Trading Strategy + TradingView-style Stock Screener**
 
-A fully self-contained backtesting system that uses Yahoo Finance weekly OHLCV data to implement, test, and visualise an EMA crossover strategy confirmed by MACD, RSI, and Volume.  Includes a **TradingView-style pre-screener** that filters stocks by price, market cap, analyst consensus, EMA trend alignment, average volume, and Average Daily Range before checking for weekly EMA9/EMA21 crossovers.
+A fully self-contained backtesting system *and* automated weekly screener that uses Yahoo Finance weekly OHLCV data to implement, test, and visualise an EMA crossover strategy confirmed by MACD, RSI, and Volume — with TradingView-style pre-filters, email and WhatsApp alerts when a crossover fires.
 
 ---
 
 ## Table of Contents
 
 1. [Strategy Logic](#strategy-logic)
-2. [Stock Screener](#stock-screener)
+2. [Stock Screener — TradingView-style Filters](#stock-screener--tradingview-style-filters)
 3. [Project Structure](#project-structure)
 4. [Installation](#installation)
-5. [Quick Start](#quick-start)
-6. [Screener Quick Start](#screener-quick-start)
-7. [Configuration](#configuration)
-8. [Understanding the Outputs](#understanding-the-outputs)
-9. [Running Tests](#running-tests)
-10. [Risk Disclaimer](#risk-disclaimer)
+5. [Quick Start — Single Stock Backtest](#quick-start--single-stock-backtest)
+6. [TradingView Screener Quick Start](#tradingview-screener-quick-start)
+7. [Weekly EMA Crossover Screener](#weekly-ema-crossover-screener)
+   - [How It Works](#how-it-works)
+   - [Running the Screener](#running-the-screener)
+   - [Screener Configuration](#screener-configuration)
+   - [Sample Output Table](#sample-output-table)
+   - [Email Notifications Setup](#email-notifications-setup)
+   - [WhatsApp Notifications Setup](#whatsapp-notifications-setup)
+   - [Scheduling (Cron)](#scheduling-cron)
+8. [Configuration — Backtest](#configuration--backtest)
+9. [Understanding the Outputs](#understanding-the-outputs)
+10. [Running Tests](#running-tests)
+11. [Risk Disclaimer](#risk-disclaimer)
 
 ---
 
@@ -116,21 +124,33 @@ The screener replicates a **TradingView-style breakout scanner**.  It applies 8 
 
 ```
 EMATraderWeekly/
-├── config.py           # All tunable parameters (strategy + screener)
+├── config.py           # All tunable parameters (strategy + screener filters)
 ├── data_fetcher.py     # Yahoo Finance OHLCV download + fundamentals fetch
 ├── indicators.py       # EMA, MACD, RSI, Volume MA, ADR calculations
 ├── signals.py          # BUY / SELL signal generation
-├── screener.py         # TradingView-style pre-screener logic
-├── screener_main.py    # CLI entry point for the screener
+├── screener.py         # TradingView-style 8-filter pre-screener logic
+├── screener_main.py    # CLI entry point for the TradingView pre-screener
 ├── backtest.py         # Backtesting engine
-├── performance.py      # Metrics (Sharpe, drawdown, win rate …)
+├── performance.py      # Metrics (Sharpe, drawdown, win rate ...)
 ├── visualize.py        # Multi-panel strategy chart
-├── main.py             # CLI entry point for backtesting
+├── main.py             # CLI entry point (single-stock backtest)
 ├── requirements.txt    # Python dependencies
+│
+├── screener/
+│   ├── __init__.py
+│   ├── screener_config.py  # Screener settings (universe, filters, notifications)
+│   ├── stock_universe.py   # Symbol list fetcher (CSV / NSE / BSE / S&P500 / Nasdaq-100)
+│   ├── screener.py         # Core EMA crossover screener logic
+│   ├── notifier.py         # Email (SMTP) + WhatsApp (Twilio) alerts
+│   ├── run_screener.py     # Headless CLI entry point
+│   ├── sample_stocks_us.csv   # 50 large-cap US stocks
+│   ├── sample_stocks_nse.csv  # 50 NSE (India) stocks
+│   └── sample_stocks_bse.csv  # 50 BSE (India) stocks
+│
 ├── tests/
 │   ├── test_indicators.py
 │   ├── test_signals.py
-│   └── test_screener.py
+│   └── test_screener.py    # Screener unit tests (no network calls)
 └── README.md
 ```
 
@@ -153,7 +173,7 @@ pip install -r requirements.txt
 
 ---
 
-## Quick Start
+## Quick Start — Single Stock Backtest
 
 ### Run with defaults (AAPL, 2015–2026)
 
@@ -179,15 +199,174 @@ python main.py TSLA 2018-01-01 2026-01-01 --save-chart tsla_strategy.png
 python main.py AAPL --save-trades aapl_trades.csv
 ```
 
-### Skip the visualisation entirely
+---
+
+## Weekly Screener
+
+The screener replicates a TradingView-style breakout scanner with EMA9/EMA21 crossover detection,
+minimum volume filter, and email + WhatsApp alerts.
+
+### How It Works
+
+1. Loads a configurable stock universe (CSV, NSE, BSE, S&P 500, or Nasdaq-100).
+2. Downloads the last N weeks of weekly OHLCV data for every stock via Yahoo Finance.
+3. Calculates **EMA9**, **EMA21**, and **10-week average volume** for each stock.
+4. Detects whether EMA9 just crossed **above** (🟢 BULLISH / Golden Cross) or **below** (🔴 BEARISH / Death Cross) EMA21 in the latest completed week.
+5. Applies the minimum average-volume filter (default: 500 K — matches the TradingView "Avg Volume 10D > 500K" filter).
+6. Sorts all stocks by average weekly volume (descending) and writes `screener_results.csv`.
+7. Sends email and/or WhatsApp alerts for every crossover stock that passes the volume filter.
+8. Appends all signals to `screener_signals.log` for audit.
+
+### Running the Screener
 
 ```bash
-python main.py --no-chart
+# Run with default settings (US sample list, volume ≥ 500K)
+python screener/run_screener.py
+
+# Use a different stock universe
+python screener/run_screener.py --universe us_sp500
+python screener/run_screener.py --universe nse_top
+python screener/run_screener.py --universe us_nasdaq100
+
+# Use a custom CSV of symbols
+python screener/run_screener.py --csv my_watchlist.csv
+
+# Raise the minimum volume filter to 1M
+python screener/run_screener.py --min-volume 1000000
+
+# Skip notifications even if enabled in config
+python screener/run_screener.py --no-notify
+
+# Verbose logging
+python screener/run_screener.py --verbose
+```
+
+### Screener Configuration
+
+Edit **`screener/screener_config.py`** (or copy it to `screener/screener_config_local.py` to keep credentials out of git):
+
+```python
+# ── Stock Universe ─────────────────────────────────────────────────────────
+STOCK_UNIVERSE = "csv"            # csv | nse_top | bse_top | us_sp500 | us_nasdaq100
+CSV_FILE       = "screener/sample_stocks_us.csv"
+
+# ── Filters ────────────────────────────────────────────────────────────────
+MIN_AVG_VOLUME = 500_000          # 10-week avg volume threshold
+LOOKBACK_WEEKS = 60               # weeks of history to download
+
+# ── EMA Settings ───────────────────────────────────────────────────────────
+EMA_FAST = 9
+EMA_SLOW = 21
+
+# ── Output ─────────────────────────────────────────────────────────────────
+OUTPUT_CSV = "screener_results.csv"
+LOG_FILE   = "screener_signals.log"
+
+# ── Email ──────────────────────────────────────────────────────────────────
+EMAIL_ENABLED   = False
+EMAIL_SMTP_HOST = "smtp.gmail.com"
+EMAIL_SMTP_PORT = 587
+EMAIL_USE_TLS   = True
+EMAIL_USER      = "your_email@gmail.com"   # or set SCREENER_EMAIL_USER env var
+EMAIL_PASS      = "your_app_password"      # or set SCREENER_EMAIL_PASS env var
+EMAIL_TO        = "recipient@example.com"  # or set SCREENER_EMAIL_TO env var
+
+# ── WhatsApp (Twilio) ───────────────────────────────────────────────────────
+WHATSAPP_ENABLED    = False
+TWILIO_ACCOUNT_SID  = "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+TWILIO_AUTH_TOKEN   = "your_twilio_auth_token"
+TWILIO_FROM         = "whatsapp:+14155238886"   # Twilio sandbox number
+TWILIO_TO           = "whatsapp:+1XXXXXXXXXX"   # your registered number
+```
+
+### Sample Output Table
+
+```
+══════════════════════════════════════════════════════════════════════════════════════════
+  EMA Weekly Screener Results
+══════════════════════════════════════════════════════════════════════════════════════════
+ Symbol     Close    EMA9   EMA21  Avg_Volume_10W  Cross_Up  Cross_Down        Week
+   NVDA   900.120  895.43  880.21      48,321,445      True       False  2024-04-15
+   AAPL   174.610  173.80  171.55      62,140,832     False       False  2024-04-15
+   MSFT   420.450  419.12  415.30      21,345,000     False       False  2024-04-15
+   AMZN   184.300  183.10  180.45      38,220,100     False       False  2024-04-15
+   TSLA   175.220  174.80  179.50     102,540,800     False        True  2024-04-15
+    ...
+
+  Total stocks screened: 50
+  Full results saved  : screener_results.csv
+
+══════════════════════════════════════════════════════════════════════════════════════════
+  🚨 2 CROSSOVER SIGNAL(S) DETECTED
+══════════════════════════════════════════════════════════════════════════════════════════
+
+🟢 EMA Weekly Crossover Alert
+────────────────────────────────────────
+Stock     : NVDA
+Signal    : BUY SIGNAL — EMA9 crossed ABOVE EMA21 (Golden Cross)
+Price     : 900.1200
+EMA9      : 895.4300
+EMA21     : 880.2100
+Avg Vol   : 48,321,445
+Week      : 2024-04-15
+────────────────────────────────────────
+
+🔴 EMA Weekly Crossover Alert
+────────────────────────────────────────
+Stock     : TSLA
+Signal    : SELL SIGNAL — EMA9 crossed BELOW EMA21 (Death Cross)
+Price     : 175.2200
+EMA9      : 174.8000
+EMA21     : 179.5000
+Avg Vol   : 102,540,800
+Week      : 2024-04-15
+────────────────────────────────────────
+```
+
+### Email Notifications Setup
+
+1. Enable 2-Factor Authentication on your Gmail account.
+2. Generate an **App Password** at <https://myaccount.google.com/apppasswords>.
+3. Set credentials as environment variables (recommended):
+
+```bash
+export SCREENER_EMAIL_USER="your_email@gmail.com"
+export SCREENER_EMAIL_PASS="your_16_char_app_password"
+export SCREENER_EMAIL_TO="recipient@example.com"
+```
+
+4. Set `EMAIL_ENABLED = True` in `screener/screener_config.py`.
+
+> **Other SMTP providers**: Change `EMAIL_SMTP_HOST` and `EMAIL_SMTP_PORT` accordingly
+> (e.g., `smtp.office365.com:587` for Outlook).
+
+### WhatsApp Notifications Setup
+
+1. Sign up for a free account at <https://www.twilio.com/>.
+2. In the Twilio Console, go to **Messaging → Try it out → Send a WhatsApp message**.
+3. Follow the sandbox instructions: send the shown join code from your WhatsApp number to `+1 415 523 8886`.
+4. Set credentials as environment variables:
+
+```bash
+export SCREENER_TWILIO_SID="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+export SCREENER_TWILIO_TOKEN="your_auth_token"
+export SCREENER_TWILIO_FROM="whatsapp:+14155238886"
+export SCREENER_TWILIO_TO="whatsapp:+91XXXXXXXXXX"   # your number
+```
+
+5. Set `WHATSAPP_ENABLED = True` in `screener/screener_config.py`.
+
+### Scheduling (Cron)
+
+Add to your crontab (`crontab -e`) to run every Monday at 8:00 AM:
+
+```cron
+0 8 * * 1  cd /path/to/EMATraderWeekly && /path/to/.venv/bin/python screener/run_screener.py >> /var/log/ema_screener.log 2>&1
 ```
 
 ---
 
-## Screener Quick Start
+## TradingView Screener Quick Start
 
 ### Scan the default watchlist
 
@@ -215,7 +394,7 @@ python screener_main.py --passing-only
 
 ---
 
-## Configuration
+## Configuration — Backtest & Screener Filters
 
 Edit **`config.py`** to change any strategy or screener parameter without touching the logic files:
 
@@ -336,7 +515,8 @@ pytest tests/test_indicators.py -v
 # Run only signal tests
 pytest tests/test_signals.py -v
 
-# Run only screener tests
+```bash
+# Run only screener tests (no network calls)
 pytest tests/test_screener.py -v
 ```
 
@@ -352,3 +532,4 @@ pytest tests/test_screener.py -v
 > - All indicators use only past data at each decision point (no look-ahead bias).
 > - **Paper trade** and validate thoroughly before risking real capital.
 > - This tool does not constitute financial or investment advice.
+
