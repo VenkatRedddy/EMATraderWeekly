@@ -41,4 +41,6 @@ Thumbs.db
 output/
 *.png
 *.csv
+# Keep bundled sample stock lists
+!screener/sample_stocks_*.csv
 
